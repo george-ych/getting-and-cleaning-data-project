@@ -1,74 +1,74 @@
-# Step1. Merges the training and the test sets to create one data set.
-# setwd("~/Desktop/Online Coursera/Coursera-Getting-and-Cleaning-Data/peer_assessment/")
-trainData <- read.table("./data/train/X_train.txt")
-dim(trainData) # 7352*561
-head(trainData)
-trainLabel <- read.table("./data/train/y_train.txt")
-table(trainLabel)
-trainSubject <- read.table("./data/train/subject_train.txt")
-testData <- read.table("./data/test/X_test.txt")
-dim(testData) # 2947*561
-testLabel <- read.table("./data/test/y_test.txt") 
-table(testLabel) 
-testSubject <- read.table("./data/test/subject_test.txt")
-joinData <- rbind(trainData, testData)
-dim(joinData) # 10299*561
-joinLabel <- rbind(trainLabel, testLabel)
-dim(joinLabel) # 10299*1
-joinSubject <- rbind(trainSubject, testSubject)
-dim(joinSubject) # 10299*1
+library(base)
+library(utils)
+library(data.table)
 
-# Step2. Extracts only the measurements on the mean and standard 
-# deviation for each measurement. 
-features <- read.table("./data/features.txt")
-dim(features)  # 561*2
-meanStdIndices <- grep("mean\\(\\)|std\\(\\)", features[, 2])
-length(meanStdIndices) # 66
-joinData <- joinData[, meanStdIndices]
-dim(joinData) # 10299*66
-names(joinData) <- gsub("\\(\\)", "", features[meanStdIndices, 2]) # remove "()"
-names(joinData) <- gsub("mean", "Mean", names(joinData)) # capitalize M
-names(joinData) <- gsub("std", "Std", names(joinData)) # capitalize S
-names(joinData) <- gsub("-", "", names(joinData)) # remove "-" in column names 
+# The function downloads the Samsung data and extracts it
+download.data <- function () {
+  zip.url <- 'https://d396qusza40orc.cloudfront.net/getdata%2Fprojectfiles%2FUCI%20HAR%20Dataset.zip'
+  zip.file <- 'dataset.zip'
 
-# Step3. Uses descriptive activity names to name the activities in 
-# the data set
-activity <- read.table("./data/activity_labels.txt")
-activity[, 2] <- tolower(gsub("_", "", activity[, 2]))
-substr(activity[2, 2], 8, 8) <- toupper(substr(activity[2, 2], 8, 8))
-substr(activity[3, 2], 8, 8) <- toupper(substr(activity[3, 2], 8, 8))
-activityLabel <- activity[joinLabel[, 1], 2]
-joinLabel[, 1] <- activityLabel
-names(joinLabel) <- "activity"
-
-# Step4. Appropriately labels the data set with descriptive activity 
-# names. 
-names(joinSubject) <- "subject"
-cleanedData <- cbind(joinSubject, joinLabel, joinData)
-dim(cleanedData) # 10299*68
-write.table(cleanedData, "merged_data.txt") # write out the 1st dataset
-
-# Step5. Creates a second, independent tidy data set with the average of 
-# each variable for each activity and each subject. 
-subjectLen <- length(table(joinSubject)) # 30
-activityLen <- dim(activity)[1] # 6
-columnLen <- dim(cleanedData)[2]
-result <- matrix(NA, nrow=subjectLen*activityLen, ncol=columnLen) 
-result <- as.data.frame(result)
-colnames(result) <- colnames(cleanedData)
-row <- 1
-for(i in 1:subjectLen) {
-    for(j in 1:activityLen) {
-        result[row, 1] <- sort(unique(joinSubject)[, 1])[i]
-        result[row, 2] <- activity[j, 2]
-        bool1 <- i == cleanedData$subject
-        bool2 <- activity[j, 2] == cleanedData$activity
-        result[row, 3:columnLen] <- colMeans(cleanedData[bool1&bool2, 3:columnLen])
-        row <- row + 1
-    }
+  download.file(zip.url, destfile = zip.file, method = 'curl')
+  unzip(zip.file)
 }
-head(result)
-write.table(result, "data_with_means.txt") # write out the 2nd dataset
 
-# data <- read.table("./data_with_means.txt")
-# data[1:12, 1:3]
+# The function loads and processes either a train or a test data set,
+# given that current directory is the Samsung data set.
+load.dataset <- function (set, features, labels) {
+  # Construct the relative pathes of data files
+  prefix <- paste(set, '/', sep = '')
+  file.data <- paste(prefix, 'X_', set, '.txt', sep = '')
+  file.label <- paste(prefix, 'y_', set, '.txt', sep = '')
+  file.subject <- paste(prefix, 'subject_', set, '.txt', sep = '')
+
+  # Cannot load the data using fread() function.
+  # fread() fails to determine the correct number of columns in dataset.
+  # So we read the data into a data.frame and then transform it into data.table
+  data <- read.table(file.data)[, features$index]
+  names(data) <- features$name
+
+  label.set <- read.table(file.label)[, 1]
+  data$label <- factor(label.set, levels=labels$level, labels=labels$label)
+
+  subject.set <- read.table(file.subject)[, 1]
+  data$subject <- factor(subject.set)
+
+  # convert to data table
+  data.table(data)
+}
+
+run.analysis <- function () {
+  setwd('UCI HAR Dataset/')
+
+  # Get the features
+  feature.set <- read.table('features.txt', col.names = c('index', 'name'))
+  features <- subset(feature.set, grepl('-(mean|std)[(]', feature.set$name))
+
+  # Get the labels
+  label.set <- read.table('activity_labels.txt', col.names = c('level', 'label'))
+
+  # Read train and test data sets
+  train.set <- load.dataset('train', features, label.set)
+  test.set <- load.dataset('test', features, label.set)
+
+  # The raw data set
+  dataset <- rbind(train.set, test.set)
+
+  # Generate the tidy data set
+  tidy.dataset <- dataset[, lapply(.SD, mean), by=list(label, subject)]
+  # Fix the variable names
+  names <- names(tidy.dataset)
+  names <- gsub('-mean', 'Mean', names) # Replace `-mean' by `Mean'
+  names <- gsub('-std', 'Std', names) # Replace `-std' by 'Std'
+  names <- gsub('[()-]', '', names) # Remove the parenthesis and dashes
+  names <- gsub('BodyBody', 'Body', names) # Replace `BodyBody' by `Body'
+  setnames(tidy.dataset, names)
+
+  # Write the raw and the tidy data sets to files
+  setwd('..')
+  write.csv(dataset, file = 'rawdata.csv', row.names = FALSE)
+  write.csv(tidy.dataset, file = 'tidydata.csv',
+	    row.names = FALSE, quote = FALSE)
+
+  # Return the tidy data set
+  tidy.dataset
+}
